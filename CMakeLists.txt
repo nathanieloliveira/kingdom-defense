@@ -1,25 +1,42 @@
 cmake_minimum_required(VERSION 3.31)
 project(kingdom_defense C CXX)
-
 set(CMAKE_C_STANDARD 11)
 
 include(FetchContent)
 
+# cimgui
 FetchContent_Declare(
         sdl3
         URL https://github.com/libsdl-org/SDL/releases/download/release-3.2.18/SDL3-3.2.18.tar.gz
 )
-
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(sdl3)
-
 include(cimgui/backend_test/cmake/GenerateCimguiBindings.cmake)
-
 set(IMGUI_STATIC true)
 set(includelist ${sdl3_SOURCE_DIR}/include)
 GenerateCimguiBindings(cimgui_with_backend sdl3 sdlgpu3 includelist)
 target_link_libraries(cimgui_with_backend PRIVATE SDL3::SDL3)
 
+# shadercross
+file(GLOB shader_sources "${CMAKE_SOURCE_DIR}/shaders/*.hlsl")
+foreach (SRC ${shader_sources})
+    get_filename_component(FILENAME ${SRC} NAME)
+    set(OUT_FILE "${CMAKE_BINARY_DIR}/${FILENAME}.spirv")
+
+    add_custom_command(
+            OUTPUT ${OUT_FILE}
+            COMMAND ${CMAKE_SOURCE_DIR}/shadercross/bin/shadercross ${SRC} -s HLSL -d SPIRV -o ${OUT_FILE}
+            DEPENDS ${SRC}
+            COMMENT "Running command for ${SRC}"
+            VERBATIM
+    )
+
+    # Collect outputs to tie into the custom target
+    list(APPEND SHADER_TARGETS ${OUT_FILE})
+endforeach ()
+add_custom_target(shaders ALL DEPENDS ${SHADER_TARGETS})
+
+# main executable
 add_executable(kingdom_defense
         main.c
 )
@@ -34,5 +51,4 @@ target_compile_definitions(
 
 target_link_libraries(kingdom_defense SDL3::SDL3)
 target_link_libraries(kingdom_defense cimgui_with_backend)
-#target_include_directories(kingdom_defense PRIVATE SDL3::SDL3)
-#target_include_directories(kingdom_defense)
+add_dependencies(kingdom_defense shaders)

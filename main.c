@@ -14,13 +14,13 @@
     } while (false);
 
 int main(void) {
-    printf("Hello, World!\n");
-
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_PRINT_ERROR_AND_EXIT("SDL_Init");
     }
 
-    SDL_Window* window = SDL_CreateWindow("Kingdom Defense", 800, 600, 0);
+    float main_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+    SDL_WindowFlags window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    SDL_Window* window = SDL_CreateWindow("Kingdom Defense", (int)(800 * main_scale), (int)(600 * main_scale), window_flags);
     if (window == NULL) {
         SDL_PRINT_ERROR_AND_EXIT("Failed to create window");
     }
@@ -35,7 +35,15 @@ int main(void) {
     }
 
     igCreateContext(NULL);
+    ImGuiIO* io = igGetIO_Nil();
+    io->ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io->ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
     igStyleColorsDark(NULL);
+
+    ImGuiStyle* style = igGetStyle();
+    ImGuiStyle_ScaleAllSizes(style, main_scale);
+    style->FontScaleDpi = main_scale;
 
     ImGui_ImplSDL3_InitForSDLGPU(window);
     ImGui_ImplSDLGPU3_InitInfo imgui_init_info = {
@@ -57,6 +65,10 @@ int main(void) {
             }
             // process events
         }
+
+        /*if (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) {
+            continue;
+        }*/
 
         SDL_GPUCommandBuffer *command_buffer = SDL_AcquireGPUCommandBuffer(gpu);
 
@@ -84,8 +96,16 @@ int main(void) {
 
         {
             bool open = true;
-            igBegin("Some imGui window", &open, 0);
-            igText("something here");
+            if (open) {
+                igShowDemoWindow(&open);
+            }
+        }
+
+        {
+            bool open = true;
+            if (igBegin("Some imGui window", &open, 0)) {
+                igText("something here");
+            }
             igEnd();
         }
 
