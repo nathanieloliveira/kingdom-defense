@@ -17,6 +17,7 @@ set(includelist ${sdl3_SOURCE_DIR}/include)
 GenerateCimguiBindings(cimgui_with_backend sdl3 sdlgpu3 includelist)
 target_link_libraries(cimgui_with_backend PRIVATE SDL3::SDL3)
 
+
 # shadercross
 file(GLOB shader_sources "${CMAKE_SOURCE_DIR}/shaders/*.hlsl")
 foreach (SRC ${shader_sources})
@@ -36,6 +37,13 @@ foreach (SRC ${shader_sources})
 endforeach ()
 add_custom_target(shaders ALL DEPENDS ${SHADER_TARGETS})
 
+FetchContent_Declare(
+        SPIRV-Cross
+        GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Cross.git
+        GIT_TAG vulkan-sdk-1.4.321.0
+)
+FetchContent_MakeAvailable(SPIRV-Cross)
+
 # main executable
 add_executable(kingdom_defense
         main.c
@@ -51,4 +59,6 @@ target_compile_definitions(
 
 target_link_libraries(kingdom_defense SDL3::SDL3)
 target_link_libraries(kingdom_defense cimgui_with_backend)
+target_link_libraries(kingdom_defense spirv-cross-reflect)
+target_link_libraries(kingdom_defense spirv-cross-c)
 add_dependencies(kingdom_defense shaders)

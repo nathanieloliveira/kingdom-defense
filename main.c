@@ -7,11 +7,98 @@
 #include <cimgui.h>
 #include <cimgui_impl.h>
 
+#include <spirv_cross_c.h>
+
 #define SDL_PRINT_ERROR_AND_EXIT(_err)                \
     do {                                              \
         fprintf(stderr, _err ": %s", SDL_GetError()); \
         exit(-1);                                     \
-    } while (false);
+    } while (false)
+
+#define CHECK_RET(x, _COND, _ERR, ...) \
+    do {                    \
+        if ((x) != _COND) {\
+            fprintf(stderr, "failed: "_ERR" at %s:%d", ##__VA_ARGS__, __FILE__, __LINE__); \
+            exit(1);\
+        }\
+    } while (false)
+
+static void error_callback(void *userdata, const char *error)
+{
+    (void)userdata;
+    fprintf(stderr, "Error: %s\n", error);
+    exit(1);
+}
+
+static void dump_resource_list(spvc_compiler compiler, spvc_resources resources, spvc_resource_type type, const char *tag)
+{
+    const spvc_reflected_resource *list = NULL;
+    size_t count = 0;
+    size_t i;
+    CHECK_RET(spvc_resources_get_resource_list_for_type(resources, type, &list, &count), SPVC_SUCCESS, "Failed to get resource list for type: %d", type);
+    printf("%s\n", tag);
+    for (i = 0; i < count; i++)
+    {
+        printf("ID: %u, BaseTypeID: %u, TypeID: %u, Name: %s\n", list[i].id, list[i].base_type_id, list[i].type_id,
+               list[i].name);
+        printf("  Set: %u, Binding: %u\n",
+               spvc_compiler_get_decoration(compiler, list[i].id, SpvDecorationDescriptorSet),
+               spvc_compiler_get_decoration(compiler, list[i].id, SpvDecorationBinding));
+    }
+}
+
+static void dump_resources(spvc_compiler compiler, spvc_resources resources)
+{
+    dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, "UBO");
+    dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_STORAGE_BUFFER, "SSBO");
+    dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_PUSH_CONSTANT, "Push");
+    dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_SEPARATE_SAMPLERS, "Samplers");
+    dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_SEPARATE_IMAGE, "Image");
+    dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, "Combined image samplers");
+    dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_STAGE_INPUT, "Stage input");
+    dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_STAGE_OUTPUT, "Stage output");
+    dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_STORAGE_IMAGE, "Storage image");
+    dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_SUBPASS_INPUT, "Subpass input");
+}
+
+
+SDL_GPUShader* load_shader(SDL_GPUDevice *device, const char *path, SDL_GPUShaderStage stage) {
+    size_t size = 0;
+    void* file = SDL_LoadFile(path, &size);
+    if (file == NULL) {
+        return NULL;
+    }
+
+    spvc_context context;
+    spvc_parsed_ir ir;
+    spvc_compiler compiler;
+    spvc_compiler_options options;
+    spvc_resources resources;
+    CHECK_RET(spvc_context_create(&context), SPVC_SUCCESS, "Failed to create spvc_context");
+    spvc_context_set_error_callback(context, error_callback, NULL);
+    CHECK_RET(spvc_context_parse_spirv(context, file, size / sizeof(SpvId), &ir), SPVC_SUCCESS, "Failed to parse spirv ir");
+    CHECK_RET(spvc_context_create_compiler(context, SPVC_BACKEND_NONE, ir, SPVC_CAPTURE_MODE_TAKE_OWNERSHIP, &compiler), SPVC_SUCCESS, "Failed to create SPVC_BACKEND_NONE compiler");
+    CHECK_RET(spvc_compiler_create_compiler_options(compiler, &options), SPVC_SUCCESS, "Failed to create compiler options");
+    CHECK_RET(spvc_compiler_install_compiler_options(compiler, options), SPVC_SUCCESS, "Failed to install compiler options");
+    CHECK_RET(spvc_compiler_create_shader_resources(compiler, &resources), SPVC_SUCCESS, "Failed to create shader resources");
+    dump_resources(compiler, resources);
+
+    spvc_context_release_allocations(context);
+
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetStringProperty(props, SDL_PROP_GPU_SHADER_CREATE_NAME_STRING, path);
+    SDL_GPUShaderCreateInfo info = {
+            .code = file,
+            .code_size = size,
+            .entrypoint = "main",
+            .format = SDL_GPU_SHADERFORMAT_SPIRV,
+            .stage = stage,
+            .props = props,
+    };
+    SDL_GPUShader *shader = SDL_CreateGPUShader(device, &info);
+    SDL_free(file);
+    return shader;
+}
 
 int main(void) {
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -29,6 +116,12 @@ int main(void) {
     if (!gpu) {
         SDL_PRINT_ERROR_AND_EXIT("Create gpu failed");
     }
+
+    SDL_GPUShader *simple_vert = load_shader(gpu, "simple.frag.hlsl.spirv", SDL_GPU_SHADERSTAGE_VERTEX);
+    if (simple_vert == NULL) {
+        SDL_PRINT_ERROR_AND_EXIT("failed to load simple_vert shader");
+    }
+
 
     if (!SDL_ClaimWindowForGPUDevice(gpu, window)) {
         SDL_PRINT_ERROR_AND_EXIT("Failed to claim window for gpu device");
