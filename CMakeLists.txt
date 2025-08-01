@@ -35,7 +35,7 @@ foreach (SRC ${shader_sources})
     # Collect outputs to tie into the custom target
     list(APPEND SHADER_TARGETS ${OUT_FILE})
 endforeach ()
-add_custom_target(shaders ALL DEPENDS ${SHADER_TARGETS})
+add_custom_target(shaders ALL DEPENDS ${SHADER_TARGETS} SOURCES ${shader_sources})
 
 FetchContent_Declare(
         SPIRV-Cross
