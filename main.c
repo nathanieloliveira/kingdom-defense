@@ -15,9 +15,9 @@
         exit(-1);                                     \
     } while (false)
 
-#define CHECK_RET(x, _COND, _ERR, ...) \
+#define CHECK_RET(_bool, _ERR, ...) \
     do {                    \
-        if ((x) != _COND) {\
+        if (!(_bool)) {\
             fprintf(stderr, "failed: "_ERR" at %s:%d", ##__VA_ARGS__, __FILE__, __LINE__); \
             exit(1);\
         }\
@@ -39,7 +39,7 @@ dump_resource_list(spvc_compiler compiler, spvc_resources resources, spvc_resour
     const spvc_reflected_resource *list = NULL;
     size_t count = 0;
     size_t i;
-    CHECK_RET(spvc_resources_get_resource_list_for_type(resources, type, &list, &count), SPVC_SUCCESS,
+    CHECK_RET(spvc_resources_get_resource_list_for_type(resources, type, &list, &count) == SPVC_SUCCESS,
               "Failed to get resource list for type: %d", type);
     printf("%s\n", tag);
     for (i = 0; i < count; i++) {
@@ -70,7 +70,6 @@ typedef struct {
     float color[4];
 } vertex_pos_color_t;
 
-
 shader_t *load_shader(SDL_GPUDevice *device, const char *path, SDL_GPUShaderStage stage, spvc_context context) {
     size_t size = 0;
     void *file = SDL_LoadFile(path, &size);
@@ -83,33 +82,34 @@ shader_t *load_shader(SDL_GPUDevice *device, const char *path, SDL_GPUShaderStag
     spvc_compiler compiler;
     spvc_compiler_options options;
     spvc_resources resources;
-    CHECK_RET(spvc_context_parse_spirv(context, file, size / sizeof(SpvId), &ir), SPVC_SUCCESS,
+    CHECK_RET(spvc_context_parse_spirv(context, file, size / sizeof(SpvId), &ir) == SPVC_SUCCESS,
               "Failed to parse spirv ir");
-    CHECK_RET(spvc_context_create_compiler(context, SPVC_BACKEND_NONE, ir, SPVC_CAPTURE_MODE_TAKE_OWNERSHIP, &compiler),
-              SPVC_SUCCESS, "Failed to create SPVC_BACKEND_NONE compiler");
-    CHECK_RET(spvc_compiler_create_compiler_options(compiler, &options), SPVC_SUCCESS,
+    CHECK_RET(
+            spvc_context_create_compiler(context, SPVC_BACKEND_NONE, ir, SPVC_CAPTURE_MODE_TAKE_OWNERSHIP, &compiler) ==
+            SPVC_SUCCESS, "Failed to create SPVC_BACKEND_NONE compiler");
+    CHECK_RET(spvc_compiler_create_compiler_options(compiler, &options) == SPVC_SUCCESS,
               "Failed to create compiler options");
-    CHECK_RET(spvc_compiler_install_compiler_options(compiler, options), SPVC_SUCCESS,
+    CHECK_RET(spvc_compiler_install_compiler_options(compiler, options) == SPVC_SUCCESS,
               "Failed to install compiler options");
-    CHECK_RET(spvc_compiler_create_shader_resources(compiler, &resources), SPVC_SUCCESS,
+    CHECK_RET(spvc_compiler_create_shader_resources(compiler, &resources) == SPVC_SUCCESS,
               "Failed to create shader resources");
 
     size_t num_uniform_buffers;
     const spvc_reflected_resource *list = NULL;
     CHECK_RET(spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, &list,
-                                                        &num_uniform_buffers), SPVC_SUCCESS,
+                                                        &num_uniform_buffers) == SPVC_SUCCESS,
               "Failed to get resource list for type: %d", SPVC_RESOURCE_TYPE_UNIFORM_BUFFER);
     size_t num_storage_buffers;
     CHECK_RET(spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_STORAGE_BUFFER, &list,
-                                                        &num_storage_buffers), SPVC_SUCCESS,
+                                                        &num_storage_buffers) == SPVC_SUCCESS,
               "Failed to get resource list for type: %d", SPVC_RESOURCE_TYPE_STORAGE_BUFFER);
     size_t num_samplers;
     CHECK_RET(spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_SEPARATE_SAMPLERS, &list,
-                                                        &num_samplers), SPVC_SUCCESS,
+                                                        &num_samplers) == SPVC_SUCCESS,
               "Failed to get resource list for type: %d", SPVC_RESOURCE_TYPE_SEPARATE_SAMPLERS);
     size_t num_storage_textures;
     CHECK_RET(spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_STORAGE_IMAGE, &list,
-                                                        &num_storage_textures), SPVC_SUCCESS,
+                                                        &num_storage_textures) == SPVC_SUCCESS,
               "Failed to get resource list for type: %d", SPVC_RESOURCE_TYPE_STORAGE_IMAGE);
 
     SDL_PropertiesID props = SDL_CreateProperties();
@@ -137,13 +137,154 @@ shader_t *load_shader(SDL_GPUDevice *device, const char *path, SDL_GPUShaderStag
     return ret;
 }
 
+typedef void (*convert_format_fun_t)(void *input, size_t input_size, void *out, size_t *out_size);
+
+typedef struct {
+    SDL_PixelFormat surface;
+    SDL_GPUTextureFormat gpu;
+    convert_format_fun_t convert;
+    SDL_GPUTextureFormat convert_format;
+    uint8_t bits_per_pixel;
+} sdl_surface_format_to_gpu_format;
+
+void convert_bgr24_to_rgba8(void *input, size_t input_size, void *out, size_t *out_size) {
+    uint8_t *input_as_bytes = (uint8_t *) input;
+    uint8_t *out_as_bytes = (uint8_t *) out;
+    size_t pixels = input_size / 3;
+    for (size_t i = 0; i < pixels; i++) {
+        size_t input_px = i * 3;
+        size_t out_px = i * 4;
+
+        uint8_t b = input_as_bytes[input_px + 0];
+        uint8_t g = input_as_bytes[input_px + 1];
+        uint8_t r = input_as_bytes[input_px + 2];
+
+        out_as_bytes[out_px + 0] = r;
+        out_as_bytes[out_px + 1] = g;
+        out_as_bytes[out_px + 2] = b;
+        out_as_bytes[out_px + 3] = UINT8_MAX;
+
+        *out_size += 4;
+    }
+}
+
+sdl_surface_format_to_gpu_format pixel_to_gpu[] = {
+        {SDL_PIXELFORMAT_BGR24, SDL_GPU_TEXTUREFORMAT_INVALID, convert_bgr24_to_rgba8,
+         SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, 32},
+};
+
+#define PIXEL_TO_GPU_SIZE (sizeof(pixel_to_gpu) / sizeof(sdl_surface_format_to_gpu_format))
+
+sdl_surface_format_to_gpu_format *gpu_format_for_surface(SDL_PixelFormat pixel_format) {
+    for (size_t i = 0; i < PIXEL_TO_GPU_SIZE; i++) {
+        if (pixel_to_gpu[i].surface == pixel_format) {
+            return &pixel_to_gpu[i];
+        }
+    }
+    return NULL;
+}
+
+SDL_GPUTexture *load_texture(SDL_GPUDevice *device, const char *asset_name) {
+    char buffer[1024] = {0};
+    snprintf(buffer, sizeof(buffer), "assets/%s", asset_name);
+    SDL_Surface *surface = SDL_LoadBMP(buffer);
+    if (surface == NULL) {
+        SDL_PRINT_ERROR_AND_EXIT("failed to load texture");
+    }
+
+    sdl_surface_format_to_gpu_format *converter = gpu_format_for_surface(surface->format);
+    CHECK_RET(converter != NULL, "Cant load texture with with SDL_PixelFormat: %d", surface->format);
+
+    uint32_t w = surface->w;
+    uint32_t h = surface->h;
+    bool free_pixels = false;
+    void *pixels = NULL;
+    SDL_GPUTextureFormat format;
+    if (converter->gpu == SDL_GPU_TEXTUREFORMAT_INVALID) {
+        pixels = SDL_malloc(1024 * 1024 * 1024);
+        if (pixels == NULL) {
+            SDL_DestroySurface(surface);
+            return NULL;
+        }
+        size_t out_size = 0;
+        converter->convert(surface->pixels, w * h, pixels, &out_size);
+        format = converter->convert_format;
+        free_pixels = true;
+    } else {
+        pixels = surface->pixels;
+        format = converter->gpu;
+    }
+
+    SDL_GPUTextureCreateInfo texture_info = {
+            .width = surface->w,
+            .height = surface->h,
+            .format = format,
+            .layer_count_or_depth = 1,
+            .num_levels = 1,
+            .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
+    };
+    SDL_GPUTexture *texture = SDL_CreateGPUTexture(device, &texture_info);
+    if (texture == NULL) {
+        goto error;
+    }
+
+    size_t size_bytes = w * h * (converter->bits_per_pixel / 8);
+    SDL_GPUTransferBufferCreateInfo texture_transfer_buffer_info = {
+            .size = size_bytes,
+    };
+    SDL_GPUTransferBuffer *texture_transfer_buffer = SDL_CreateGPUTransferBuffer(device, &texture_transfer_buffer_info);
+    if (texture_transfer_buffer == NULL) {
+        goto error;
+    }
+
+    void *mem = SDL_MapGPUTransferBuffer(device, texture_transfer_buffer, false);
+    memcpy(mem, pixels, size_bytes);
+    SDL_UnmapGPUTransferBuffer(device, texture_transfer_buffer);
+
+    SDL_GPUCommandBuffer *command_buffer = SDL_AcquireGPUCommandBuffer(device);
+    if (command_buffer == NULL) {
+        goto error;
+    }
+
+    SDL_GPUCopyPass *copy_pass = SDL_BeginGPUCopyPass(command_buffer);
+
+    SDL_UploadToGPUTexture(copy_pass,
+                           &(SDL_GPUTextureTransferInfo) {
+                                   .transfer_buffer = texture_transfer_buffer,
+                                   .pixels_per_row = w,
+                                   .rows_per_layer = h,
+                           }, &(SDL_GPUTextureRegion) {
+                    .texture = texture,
+            }, false);
+
+    SDL_EndGPUCopyPass(copy_pass);
+    SDL_SubmitGPUCommandBuffer(command_buffer);
+
+    SDL_ReleaseGPUTransferBuffer(device, texture_transfer_buffer);
+    SDL_DestroySurface(surface);
+    if (free_pixels) {
+        SDL_free(pixels);
+    }
+    return texture;
+
+    error:
+    if (free_pixels) {
+        SDL_free(pixels);
+    }
+    if (texture) {
+        SDL_ReleaseGPUTexture(device, texture);
+    }
+    SDL_DestroySurface(surface);
+    return NULL;
+}
+
 int main(void) {
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_PRINT_ERROR_AND_EXIT("SDL_Init");
     }
 
     spvc_context context;
-    CHECK_RET(spvc_context_create(&context), SPVC_SUCCESS, "Failed to create spvc_context");
+    CHECK_RET(spvc_context_create(&context) == SPVC_SUCCESS, "Failed to create spvc_context");
     spvc_context_set_error_callback(context, error_callback, NULL);
 
     float main_scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
@@ -173,6 +314,8 @@ int main(void) {
         SDL_PRINT_ERROR_AND_EXIT("Failed to claim window for gpu device");
     }
 
+    SDL_GPUTexture *grass = load_texture(gpu, "grass.bmp");
+
     igCreateContext(NULL);
     ImGuiIO *io = igGetIO_Nil();
     io->ConfigFlags |= ImGuiConfigFlags_DockingEnable;
@@ -198,33 +341,36 @@ int main(void) {
             .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
             .target_info = {
                     .num_color_targets = 1,
-                    .color_target_descriptions = (SDL_GPUColorTargetDescription[]){{
-                        .format = SDL_GetGPUSwapchainTextureFormat(gpu, window),
-                    }},
+                    .color_target_descriptions = (SDL_GPUColorTargetDescription[]) {{
+                                                                                            .format = SDL_GetGPUSwapchainTextureFormat(
+                                                                                                    gpu, window),
+                                                                                    }},
             },
             .rasterizer_state = {
                     .fill_mode = SDL_GPU_FILLMODE_FILL,
             },
             .vertex_input_state = (SDL_GPUVertexInputState) {
-                .num_vertex_buffers = 1,
-                .vertex_buffer_descriptions = (SDL_GPUVertexBufferDescription[]) {{
-                        .slot = 0,
-                        .input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
-                        .instance_step_rate = 0,
-                        .pitch = sizeof(vertex_pos_color_t),
-                }},
-                .num_vertex_attributes = 2,
-                .vertex_attributes = (SDL_GPUVertexAttribute[]) {{
-                    .buffer_slot = 0,
-                    .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
-                    .location = 0,
-                    .offset = 0,
-                }, {
-                        .buffer_slot = 0,
-                        .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
-                        .location = 1,
-                        .offset = offsetof(vertex_pos_color_t, color),
-                }},
+                    .num_vertex_buffers = 1,
+                    .vertex_buffer_descriptions = (SDL_GPUVertexBufferDescription[]) {{
+                                                                                              .slot = 0,
+                                                                                              .input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
+                                                                                              .instance_step_rate = 0,
+                                                                                              .pitch = sizeof(vertex_pos_color_t),
+                                                                                      }},
+                    .num_vertex_attributes = 2,
+                    .vertex_attributes = (SDL_GPUVertexAttribute[]) {{
+                                                                             .buffer_slot = 0,
+                                                                             .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+                                                                             .location = 0,
+                                                                             .offset = 0,
+                                                                     },
+                                                                     {
+                                                                             .buffer_slot = 0,
+                                                                             .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
+                                                                             .location = 1,
+                                                                             .offset = offsetof(vertex_pos_color_t,
+                                                                                                color),
+                                                                     }},
             },
     };
     SDL_GPUGraphicsPipeline *pipeline = SDL_CreateGPUGraphicsPipeline(gpu, &pipelineCreateInfo);
@@ -240,10 +386,10 @@ int main(void) {
             .size = buffer_info.size,
     };
     SDL_GPUTransferBuffer *transfer_buffer = SDL_CreateGPUTransferBuffer(gpu, &transfer_buffer_info);
-    vertex_pos_color_t* mem = SDL_MapGPUTransferBuffer(gpu, transfer_buffer, false);
-    mem[0] = (vertex_pos_color_t){ -1.0f, -1.0f, 1.0f, 0.0f, 0.0f, 1.0f };
-    mem[1] = (vertex_pos_color_t){ 1.0f, -1.0f, 0.0f, 1.0f, 0.0f, 1.0f };
-    mem[2] = (vertex_pos_color_t){ 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f };
+    vertex_pos_color_t *mem = SDL_MapGPUTransferBuffer(gpu, transfer_buffer, false);
+    mem[0] = (vertex_pos_color_t) {-1.0f, -1.0f, 1.0f, 0.0f, 0.0f, 1.0f};
+    mem[1] = (vertex_pos_color_t) {1.0f, -1.0f, 0.0f, 1.0f, 0.0f, 1.0f};
+    mem[2] = (vertex_pos_color_t) {0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f};
     SDL_UnmapGPUTransferBuffer(gpu, transfer_buffer);
 
     bool quit = false;
@@ -269,11 +415,11 @@ int main(void) {
         SDL_UploadToGPUBuffer(copy_pass,
                               &(SDL_GPUTransferBufferLocation) {
                                       .transfer_buffer = transfer_buffer,
-                                },
+                              },
                               &(SDL_GPUBufferRegion) {
                                       .buffer = buffer,
                                       .size = buffer_info.size,
-                                },
+                              },
                               false
         );
         SDL_EndGPUCopyPass(copy_pass);
@@ -295,9 +441,9 @@ int main(void) {
         SDL_GPURenderPass *render_pass = SDL_BeginGPURenderPass(command_buffer, &target_info, 1, NULL);
 
         SDL_BindGPUGraphicsPipeline(render_pass, pipeline);
-        SDL_BindGPUVertexBuffers(render_pass, 0, &(SDL_GPUBufferBinding){
+        SDL_BindGPUVertexBuffers(render_pass, 0, &(SDL_GPUBufferBinding) {
                 .buffer = buffer,
-            }, 1);
+        }, 1);
         SDL_DrawGPUPrimitives(render_pass, 3, 1, 0, 0);
         SDL_EndGPURenderPass(render_pass);
 

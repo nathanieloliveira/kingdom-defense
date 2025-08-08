@@ -37,6 +37,27 @@ foreach (SRC ${shader_sources})
 endforeach ()
 add_custom_target(shaders ALL DEPENDS ${SHADER_TARGETS} SOURCES ${shader_sources})
 
+macro(copy_files TARGET_NAME GLOBPAT DESTINATION)
+    file(GLOB COPY_FILES
+            RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+            ${GLOBPAT})
+    add_custom_target(${TARGET_NAME} ALL
+            COMMENT "Copying files: ${GLOBPAT}")
+
+    foreach(FILENAME ${COPY_FILES})
+        set(SRC "${CMAKE_CURRENT_SOURCE_DIR}/${FILENAME}")
+        set(DST "${DESTINATION}/${FILENAME}")
+
+        add_custom_command(
+                TARGET ${TARGET_NAME}
+                COMMAND ${CMAKE_COMMAND} -E copy ${SRC} ${DST}
+                POST_BUILD
+        )
+    endforeach(FILENAME)
+endmacro(copy_files)
+
+copy_files(copy_assets assets/*.bmp ${CMAKE_BINARY_DIR})
+
 FetchContent_Declare(
         SPIRV-Cross
         GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Cross.git
@@ -62,3 +83,4 @@ target_link_libraries(kingdom_defense cimgui_with_backend)
 target_link_libraries(kingdom_defense spirv-cross-reflect)
 target_link_libraries(kingdom_defense spirv-cross-c)
 add_dependencies(kingdom_defense shaders)
+add_dependencies(kingdom_defense copy_assets)
