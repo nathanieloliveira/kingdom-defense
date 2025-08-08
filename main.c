@@ -64,6 +64,12 @@ static void dump_resources(spvc_compiler compiler, spvc_resources resources) {
     dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_SUBPASS_INPUT, "Subpass input");
 }
 
+typedef struct {
+    float x;
+    float y;
+    float color[4];
+} vertex_pos_color_t;
+
 
 shader_t *load_shader(SDL_GPUDevice *device, const char *path, SDL_GPUShaderStage stage, spvc_context context) {
     size_t size = 0;
@@ -199,8 +205,46 @@ int main(void) {
             .rasterizer_state = {
                     .fill_mode = SDL_GPU_FILLMODE_FILL,
             },
+            .vertex_input_state = (SDL_GPUVertexInputState) {
+                .num_vertex_buffers = 1,
+                .vertex_buffer_descriptions = (SDL_GPUVertexBufferDescription[]) {{
+                        .slot = 0,
+                        .input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX,
+                        .instance_step_rate = 0,
+                        .pitch = sizeof(vertex_pos_color_t),
+                }},
+                .num_vertex_attributes = 2,
+                .vertex_attributes = (SDL_GPUVertexAttribute[]) {{
+                    .buffer_slot = 0,
+                    .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,
+                    .location = 0,
+                    .offset = 0,
+                }, {
+                        .buffer_slot = 0,
+                        .format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,
+                        .location = 1,
+                        .offset = offsetof(vertex_pos_color_t, color),
+                }},
+            },
     };
     SDL_GPUGraphicsPipeline *pipeline = SDL_CreateGPUGraphicsPipeline(gpu, &pipelineCreateInfo);
+
+    SDL_GPUBufferCreateInfo buffer_info = {
+            .usage = SDL_GPU_BUFFERUSAGE_VERTEX,
+            .size = sizeof(vertex_pos_color_t) * 3,
+    };
+    SDL_GPUBuffer *buffer = SDL_CreateGPUBuffer(gpu, &buffer_info);
+
+    SDL_GPUTransferBufferCreateInfo transfer_buffer_info = {
+            .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+            .size = buffer_info.size,
+    };
+    SDL_GPUTransferBuffer *transfer_buffer = SDL_CreateGPUTransferBuffer(gpu, &transfer_buffer_info);
+    vertex_pos_color_t* mem = SDL_MapGPUTransferBuffer(gpu, transfer_buffer, false);
+    mem[0] = (vertex_pos_color_t){ -1.0f, -1.0f, 1.0f, 0.0f, 0.0f, 1.0f };
+    mem[1] = (vertex_pos_color_t){ 1.0f, -1.0f, 0.0f, 1.0f, 0.0f, 1.0f };
+    mem[2] = (vertex_pos_color_t){ 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f };
+    SDL_UnmapGPUTransferBuffer(gpu, transfer_buffer);
 
     bool quit = false;
 
@@ -221,6 +265,19 @@ int main(void) {
 
         SDL_GPUCommandBuffer *command_buffer = SDL_AcquireGPUCommandBuffer(gpu);
 
+        SDL_GPUCopyPass *copy_pass = SDL_BeginGPUCopyPass(command_buffer);
+        SDL_UploadToGPUBuffer(copy_pass,
+                              &(SDL_GPUTransferBufferLocation) {
+                                      .transfer_buffer = transfer_buffer,
+                                },
+                              &(SDL_GPUBufferRegion) {
+                                      .buffer = buffer,
+                                      .size = buffer_info.size,
+                                },
+                              false
+        );
+        SDL_EndGPUCopyPass(copy_pass);
+
         SDL_GPUTexture *window_texture;
         uint32_t width = 0;
         uint32_t height = 0;
@@ -238,8 +295,10 @@ int main(void) {
         SDL_GPURenderPass *render_pass = SDL_BeginGPURenderPass(command_buffer, &target_info, 1, NULL);
 
         SDL_BindGPUGraphicsPipeline(render_pass, pipeline);
+        SDL_BindGPUVertexBuffers(render_pass, 0, &(SDL_GPUBufferBinding){
+                .buffer = buffer,
+            }, 1);
         SDL_DrawGPUPrimitives(render_pass, 3, 1, 0, 0);
-
         SDL_EndGPURenderPass(render_pass);
 
         // draw imgui
