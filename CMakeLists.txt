@@ -68,6 +68,7 @@ FetchContent_MakeAvailable(SPIRV-Cross)
 # main executable
 add_executable(kingdom_defense
         main.c
+        shader_inputs.h
 )
 set_target_properties(kingdom_defense PROPERTIES LINKER_LANGUAGE CXX)
 target_compile_definitions(
