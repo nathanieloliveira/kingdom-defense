@@ -437,6 +437,7 @@ load_quad_pipeline(SDL_GPUDevice *device, SDL_GPUTextureFormat color_target_form
 }
 
 void upload_data_to_gpu(SDL_GPUDevice *device, SDL_GPUBuffer *buffer, const void* data, size_t size) {
+    // TODO: make uploads batched
     SDL_GPUTransferBufferCreateInfo transfer_buffer_info = {
             .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
             .size = size,
@@ -528,10 +529,7 @@ int main(void) {
     quad_vert quad_vertices[] = {
             // top
             { .xy_pos = {-0.5f, 0.5f}, .uv = {0.0f, 0.0f}, .color = {1.0f, 0.0f, 0.0f, 1.0f}},
-            { .xy_pos = {0.5f, -0.5f}, .uv = {1.0f, 1.0f}, .color = {0.0f, 1.0f, 0.0f, 1.0f}},
             { .xy_pos = {0.5f, 0.5f}, .uv = {1.0f, 0.0f}, .color = {0.0f, 0.0f, 1.0f, 1.0f}},
-            // bottom
-            { .xy_pos = {-0.5f, 0.5f}, .uv = {0.0f, 0.0f}, .color = {1.0f, 0.0f, 0.0f, 1.0f}},
             { .xy_pos = {-0.5f, -0.5f}, .uv = {0.0f, 1.0f}, .color = {0.0f, 0.0f, 1.0f, 1.0f}},
             { .xy_pos = {0.5f, -0.5f}, .uv = {1.0f, 1.0f}, .color = {0.0f, 1.0f, 0.0f, 1.0f}},
     };
@@ -541,6 +539,17 @@ int main(void) {
     };
     SDL_GPUBuffer *quad_buffer = SDL_CreateGPUBuffer(device, &quad_buffer_info);
     upload_data_to_gpu(device, quad_buffer, quad_vertices, sizeof(quad_vertices));
+
+    uint16_t quad_index[] = {
+            0, 3, 1,
+            0, 2, 3,
+    };
+    SDL_GPUBufferCreateInfo quad_index_buffer_info = {
+            .usage = SDL_GPU_BUFFERUSAGE_INDEX,
+            .size = sizeof(quad_index),
+    };
+    SDL_GPUBuffer *quad_index_buffer = SDL_CreateGPUBuffer(device, &quad_index_buffer_info);
+    upload_data_to_gpu(device, quad_index_buffer, quad_index, sizeof(quad_index));
 
     bool quit = false;
 
@@ -585,8 +594,9 @@ int main(void) {
 
         SDL_BindGPUGraphicsPipeline(render_pass, quad_pipeline);
         SDL_BindGPUVertexBuffers(render_pass, 0, &(SDL_GPUBufferBinding) { .buffer = quad_buffer }, 1);
+        SDL_BindGPUIndexBuffer(render_pass, &(SDL_GPUBufferBinding) { .buffer = quad_index_buffer}, SDL_GPU_INDEXELEMENTSIZE_16BIT);
         SDL_BindGPUFragmentSamplers(render_pass, 0, &(SDL_GPUTextureSamplerBinding){ .texture = grass, .sampler = grass_sampler }, 1);
-        SDL_DrawGPUPrimitives(render_pass, 6, 1, 0, 0);
+        SDL_DrawGPUIndexedPrimitives(render_pass, 6, 1, 0, 0, 0);
 
         SDL_EndGPURenderPass(render_pass);
 
